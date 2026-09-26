@@ -28,10 +28,15 @@ export type LaunchAgentInNewTabArgs = {
   launchPlatform?: NodeJS.Platform
   /** Called after the prompt is actually delivered to the agent input path. */
   onPromptDelivered?: () => void
+  /**
+   * Called before `onPromptDelivered` when the paste was written without ever observing the
+   * agent's composer, so the launch cannot claim the prompt arrived. Fires only on the
+   * terminal route, whose readiness signal the client watches itself.
+   */
+  onPromptDeliveryUnconfirmed?: () => void
   /** Whether the new tab takes the foreground. Default true, as the tab bar's `+` expects.
-   *  A caller launching into a workspace it is not standing in — the session grid — passes
-   *  false: `createTab` otherwise moves the GLOBAL `activeTabId`, and the terminal view
-   *  would replace whatever surface the ACTIVE workspace was showing. */
+   *  The session grid passes false: otherwise the new tab becomes its workspace's selected
+   *  tab and the terminal view replaces the editor or browser that workspace was showing. */
   activate?: boolean
   /** Keeps a preflighted route authoritative across workspace creation. */
   agentSessionLaunchPlan?: AgentSessionLaunchPlan

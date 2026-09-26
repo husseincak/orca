@@ -7,6 +7,7 @@ import { replayPreviewConnectionSnapshot } from './preview-terminal-snapshot-rep
 import { useEffectiveMacOptionAsAlt } from '@/lib/keyboard-layout/use-effective-mac-option-as-alt'
 import { buildPreviewTerminalOptions } from './preview-terminal-options'
 import {
+  previewTerminalRemountKey,
   usePreviewTerminalAppearanceSync,
   usePreviewTerminalTheme
 } from './use-preview-terminal-appearance-sync'
@@ -82,6 +83,7 @@ export function AgentTerminalPreview({
   const { terminalTheme, terminalMode } = usePreviewTerminalTheme(settings, systemPrefersDark)
   const [mountSurfaceId] = useState(nextSurfaceId)
   const surfaceIdRef = useRef(mountSurfaceId)
+  const remountKey = previewTerminalRemountKey(settings)
   // A null snapshot means no serializer knows this pty (it died or was never
   // spawned this session) — say so instead of painting a silent blank terminal.
   const [ptyGone, setPtyGone] = useState(false)
@@ -104,6 +106,7 @@ export function AgentTerminalPreview({
     onPtyGoneRef.current = onPtyGone
   }, [settings, macOptionAsAlt, terminalInput, ptyId, workspace, fontSize, autoFocus, onPtyGone])
 
+  // Font changes retain the replay-driven fit, grid claim and input-owner reset.
   useEffect(() => {
     setPtyGone(false)
     setPhase('connecting')
@@ -450,7 +453,7 @@ export function AgentTerminalPreview({
       terminal?.dispose()
       terminalRef.current = null
     }
-  }, [ptyId, terminalTheme, terminalMode, focusRef, fitAxis, detachBatched])
+  }, [ptyId, terminalTheme, terminalMode, remountKey, focusRef, fitAxis, detachBatched])
 
   usePreviewTerminalAppearanceSync({
     terminalRef,

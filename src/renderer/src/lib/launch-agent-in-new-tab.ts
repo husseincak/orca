@@ -1,7 +1,5 @@
 import { useAppStore } from '@/store'
 import { planLaunchAgentStartupPrompt } from '@/lib/launch-agent-startup-prompt-plan'
-import { CLIENT_PLATFORM } from '@/lib/new-workspace'
-import { getAgentLaunchPlatformForRepo } from '@/lib/agent-launch-platform'
 import { persistAgentLaunchTabOrder } from '@/lib/launch-agent-tab-order'
 import { tuiAgentToAgentKind } from '@/lib/telemetry'
 import { createPasteReadinessTimeoutNotice } from '@/lib/launch-agent-paste-timeout-notice'
@@ -13,19 +11,16 @@ import { initialAgentTabViewModeProps } from '@/lib/native-chat-initial-view-mod
 import { isNativeChatTranscriptLocalReadable } from '@/lib/native-chat-transcript-readability'
 import { getRuntimeEnvironmentIdForWorktree } from '@/lib/worktree-runtime-owner'
 import { resolveWorktreeOperationRouteForHost } from '@/lib/worktree-operation-route'
-import { getLocalProjectExecutionRuntimeContext } from '@/lib/local-preflight-context'
 import { isWebRuntimeSessionActive } from '@/runtime/web-runtime-session'
 import { launchAgentInWebHostTab } from '@/lib/launch-agent-web-host-tab'
 import {
   resolveTuiAgentLaunchArgs,
   resolveTuiAgentLaunchEnv
 } from '../../../shared/tui-agent-launch-defaults'
-import { resolveLocalWindowsAgentStartupShell } from '../../../shared/windows-terminal-shell'
 import { TUI_AGENT_CONFIG } from '../../../shared/tui-agent-config'
 import { seedCommandCodeSubmittedPromptStatus } from '@/lib/command-code-prompt-status-seed'
-import { getRepoSshConnectionId, parseExecutionHostId } from '../../../shared/execution-host'
-import { getConnectionIdFromState } from '@/lib/connection-context'
-import { findRepoForHost } from '@/store/slices/repo-host-identity'
+import { parseExecutionHostId } from '../../../shared/execution-host'
+import { resolveAgentLaunchExecutionContext } from '@/lib/launch-agent-execution-context'
 import { resolveInitialNativeChatSessionOptions } from '@/components/native-chat/native-chat-launch-session-options'
 import { seedNativeChatAppliedSessionOptions } from '@/components/native-chat/native-chat-session-option-cache'
 import { launchAgentInStructuredNewTab } from '@/lib/launch-agent-in-new-tab-structured'
@@ -72,48 +67,19 @@ function launchAgentInNewTabInternal(args: LaunchAgentInNewTabArgs): LaunchAgent
     quickCommandLabel,
     launchPlatform,
     onPromptDelivered,
+    onPromptDeliveryUnconfirmed,
     activate = true,
     agentSessionLaunchPlan,
     beforeSurfaceOpen
   } = args
   const store = useAppStore.getState()
   const selectedHost = parseExecutionHostId(executionHostId)
-  // Why the host-qualified lookups when a host was picked: a bare-id `find` answers with
-  // whichever publication comes first, and the repo behind it decides the launch platform
-  // and whether the command is built for a remote shell at all.
-  const worktree = executionHostId
-    ? (store.getKnownWorktreeById?.(worktreeId, executionHostId) ?? null)
-    : store.allWorktrees?.().find((entry: { id: string }) => entry.id === worktreeId)
-  const repo = worktree
-    ? executionHostId
-      ? findRepoForHost(store.repos ?? [], worktree.repoId, { hostId: executionHostId })
-      : store.repos?.find((entry) => entry.id === worktree.repoId)
-    : null
-  // A selected host must not be re-resolved through an ambiguous workspace ID.
-  const worktreeSshConnectionId = selectedHost
-    ? selectedHost.kind === 'ssh'
-      ? selectedHost.targetId
-      : repo
-        ? getRepoSshConnectionId(repo)
-        : null
-    : getConnectionIdFromState(store, worktreeId)
-  const resolvedLaunchPlatform =
-    launchPlatform ??
-    (repo
-      ? getAgentLaunchPlatformForRepo(
-          repo,
-          worktreeSshConnectionId
-            ? undefined
-            : getLocalProjectExecutionRuntimeContext(store, worktreeId)
-        )
-      : CLIENT_PLATFORM)
-  // Why: SSH remotes deploy the shim as plain `orca`, so skip the Linux-only `orca-ide` rename for remote launches.
-  const isRemote = Boolean(worktreeSshConnectionId)
-  const queuedShell = resolveLocalWindowsAgentStartupShell({
-    platform: resolvedLaunchPlatform,
-    isRemote,
-    terminalWindowsShell: store.settings?.terminalWindowsShell
-  })
+  const { worktreeSshConnectionId, resolvedLaunchPlatform, isRemote, queuedShell } =
+    resolveAgentLaunchExecutionContext(store, {
+      worktreeId,
+      ...(executionHostId ? { executionHostId } : {}),
+      ...(launchPlatform ? { launchPlatform } : {})
+    })
   const cmdOverrides = store.settings?.agentCmdOverrides ?? {}
   const effectiveAgentArgs =
     agentArgs !== undefined
@@ -123,6 +89,7 @@ function launchAgentInNewTabInternal(args: LaunchAgentInNewTabArgs): LaunchAgent
   const trimmedPrompt = prompt?.trim() ?? ''
   const hasPrompt = trimmedPrompt.length > 0
   const isFollowupPath = TUI_AGENT_CONFIG[agent].promptInjectionMode === 'stdin-after-start'
+  const workspaceKind = workspaceKindForWorktreeId(worktreeId)
   // Why: the remote host can't infer this client's draft/default view choice, so decide it here for paired tabs too.
   const viewModePromptDelivery =
     hasPrompt && isFollowupPath && promptDelivery === 'auto-submit' ? 'draft' : promptDelivery
@@ -202,7 +169,7 @@ function launchAgentInNewTabInternal(args: LaunchAgentInNewTabArgs): LaunchAgent
     agentSessionLaunchPlan ??
     planAgentSessionLaunch(store, {
       agent,
-      workspace: { kind: workspaceKindForWorktreeId(worktreeId), worktreeId, executionHostId },
+      workspace: { kind: workspaceKind, worktreeId, executionHostId },
       prompt: trimmedPrompt,
       promptDelivery: viewModePromptDelivery,
       tuiCustomization: { cwd: initialCwd },
@@ -296,8 +263,9 @@ function launchAgentInNewTabInternal(args: LaunchAgentInNewTabArgs): LaunchAgent
       content: pasteDraftAfterLaunch,
       agent,
       submit: submitPastedPrompt,
-      forcePaste: promptDelivery === 'submit-after-ready',
-      onTimeout: timeoutNotice.onTimeout
+      forcePaste: true,
+      onTimeout: timeoutNotice.onTimeout,
+      ...(onPromptDeliveryUnconfirmed ? { onUnconfirmedDelivery: onPromptDeliveryUnconfirmed } : {})
     }).then((delivered) => {
       if (delivered) {
         if (agent === 'command-code' && submitPastedPrompt) {
@@ -320,11 +288,11 @@ function launchAgentInNewTabInternal(args: LaunchAgentInNewTabArgs): LaunchAgent
     onPromptDelivered?.()
   }
 
-  // Why: without setActiveTabType('terminal') a worktree showing an editor keeps rendering it and the new tab stays hidden.
-  // Why gated: this writes the ACTIVE workspace's surface, not the target's, so a background
-  // launch would swap the editor or browser the user left open somewhere else entirely.
+  // Why: without setActiveTabType('terminal') an activated launch can stay hidden behind an editor.
+  // Scoped to the launch's worktree so a floating or background launch leaves the main window's tab alone;
+  // gated so a grid launch into the on-screen worktree keeps the editor or browser it was showing.
   if (activate) {
-    store.setActiveTabType('terminal')
+    store.setActiveTabType('terminal', worktreeId)
   }
 
   // Why: persist tab-bar order so reconcileTabOrder doesn't fall back to terminals-first and jump the new tab to index 0.

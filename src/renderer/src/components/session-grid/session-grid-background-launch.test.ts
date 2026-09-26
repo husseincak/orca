@@ -14,10 +14,10 @@ import type { ConnectPanePtySession } from '@/components/terminal-pane/pty-conne
 
 /**
  * "Launch in background" means the grid stays where it is. Against mocks that is trivially
- * true and says nothing: `createTab` activates by default and moves the GLOBAL `activeTabId`,
- * and the agent route also calls `setActiveTabType('terminal')` on whatever workspace is
- * active — which is not the launch target. So these run against the real store, and watch the
- * foreground the user comes back to, not just `activeWorktreeId`.
+ * true and says nothing: `createTab` activates by default, which moves the GLOBAL `activeTabId`
+ * when the target is the workspace on screen, and the agent route retypes that workspace to
+ * `terminal`. So these run against the real store, and watch the foreground the user comes
+ * back to, not just `activeWorktreeId`.
  */
 const ACTIVE_WT = 'repo-1::/code/active'
 const TARGET_WT = 'repo-1::/code/target'
@@ -188,9 +188,26 @@ describe('launching from the session grid', () => {
     expect(foreground()).toEqual(before)
   })
 
+  // The grid's own workspace is the one case where the default launch would repaint the foreground.
+  it('opens an agent in the on-screen workspace without replacing its editor', () => {
+    const before = foreground()
+
+    const result = launchAgentInNewTab({
+      agent: 'claude',
+      worktreeId: ACTIVE_WT,
+      activate: false,
+      launchSource: 'session_grid'
+    })
+
+    if (result?.surface.kind !== 'local-terminal') {
+      throw new Error('Expected terminal launch')
+    }
+    expect(foreground()).toEqual(before)
+  })
+
   // The tab bar's `+` is the other caller, and it still hands focus to what it just opened.
   it('still activates for a caller that did not ask to stay put', () => {
-    const result = launchAgentInNewTab({ agent: 'claude', worktreeId: TARGET_WT })
+    const result = launchAgentInNewTab({ agent: 'claude', worktreeId: ACTIVE_WT })
 
     if (result?.surface.kind !== 'local-terminal') {
       throw new Error('Expected terminal launch')

@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react'
-import type { Terminal } from '@xterm/xterm'
+import type { ITheme, Terminal } from '@xterm/xterm'
+import { useShallow } from 'zustand/react/shallow'
 import type { GlobalSettings } from '../../../../shared/global-settings-types'
 import type { MacOptionAsAlt } from '@/components/terminal-pane/terminal-shortcut-policy'
 import { composeActiveTerminalTheme } from '@/components/terminal-pane/terminal-appearance'
@@ -7,7 +8,7 @@ import { getBuiltinTheme, resolveEffectiveTerminalAppearance } from '@/lib/termi
 import { buildPreviewAppearanceOptions } from './preview-terminal-options'
 import { syncPreviewTerminalLigatures } from './preview-terminal-ligatures'
 
-/** The effective theme for a preview; memoised because it keys the terminal's mount effect. */
+/** The effective theme for a preview; identity-stable because it keys the terminal's mount effect. */
 export function usePreviewTerminalTheme(
   settings: GlobalSettings | null,
   systemPrefersDark: boolean
@@ -15,7 +16,7 @@ export function usePreviewTerminalTheme(
   terminalTheme: ReturnType<typeof composeActiveTerminalTheme> | null
   terminalMode: 'light' | 'dark'
 } {
-  return useMemo(() => {
+  const { terminalTheme: composedTheme, terminalMode } = useMemo(() => {
     if (!settings) {
       return { terminalTheme: null, terminalMode: 'dark' as const }
     }
@@ -26,6 +27,22 @@ export function usePreviewTerminalTheme(
     )
     return { terminalTheme: theme, terminalMode: appearance.mode }
   }, [settings, systemPrefersDark])
+  // Settings arrive as cloned snapshots; compare theme values before reconnecting.
+  const retainTheme = useShallow((theme: ITheme | null) => theme)
+  return { terminalTheme: retainTheme(composedTheme), terminalMode }
+}
+
+/** Settings the open preview cannot take in place; a change remounts it so fit, grid claim and input owner re-run. */
+export function previewTerminalRemountKey(settings: GlobalSettings | null): string {
+  return JSON.stringify([
+    settings?.terminalMinimumContrastRatio,
+    settings?.terminalFontSize,
+    settings?.terminalFontFamily,
+    settings?.terminalFontWeight,
+    settings?.terminalFontWeightBold,
+    settings?.terminalLineHeight,
+    settings?.terminalLigatures
+  ])
 }
 
 /** Applies appearance in place (a remount reconnects the pty and repaints); a font change moves the cell size, so fit and claim re-measure. */

@@ -3,6 +3,8 @@
 import '@testing-library/jest-dom/vitest'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { TerminalPreviewApi } from '../../../../preload/api/dashboard-api'
+import type { TerminalPreviewConnectResult } from '../../../../shared/terminal-preview'
 
 type PreviewTestTerminal = {
   write: ReturnType<typeof vi.fn>
@@ -150,7 +152,7 @@ describe('AgentTerminalPreview', () => {
   }))
   const ack = vi.fn(async () => {})
   const unsubscribe = vi.fn(async () => {})
-  const connect = vi.fn()
+  const connect = vi.fn<TerminalPreviewApi['connect']>()
   const readClipboardText = vi.fn(async () => 'clip-text')
   const writeClipboardText = vi.fn(async () => {})
   const writeTerminalClipboardText = vi.fn(async () => {})
@@ -515,7 +517,7 @@ describe('AgentTerminalPreview', () => {
   it('does not let a redelivered kitty push outlive the TUI pop', async () => {
     connect.mockResolvedValueOnce({
       snapshot: { data: '\x1b[>1u', cols: 80, rows: 24, seq: 1 },
-      replay: ['\x1b[>1u']
+      replay: [{ data: '\x1b[>1u', mode: 'replay' }]
     })
     render(<AgentTerminalPreview ptyId="pty-1" />)
     await waitFor(() => expect(terminalHarness.instances).toHaveLength(1))
@@ -566,10 +568,7 @@ describe('AgentTerminalPreview', () => {
   })
 
   it('keeps the existing terminal visible while a resync snapshot is captured', async () => {
-    let resolveRefresh!: (value: {
-      snapshot: { data: string; cols: number; rows: number; seq: number }
-      replay: string[]
-    }) => void
+    let resolveRefresh!: (value: TerminalPreviewConnectResult) => void
     connect
       .mockResolvedValueOnce({
         snapshot: { data: 'first', cols: 80, rows: 24, seq: 1 },
@@ -715,8 +714,8 @@ describe('AgentTerminalPreview', () => {
   })
 
   it('keeps two surfaces on the same pty in one window on separate streams', async () => {
-    connect.mockImplementation(async (_ptyId: string, opts: { surfaceId?: string }) => ({
-      snapshot: { data: `for ${opts.surfaceId}`, cols: 80, rows: 24, seq: 1 },
+    connect.mockImplementation(async (_ptyId, opts) => ({
+      snapshot: { data: `for ${opts?.surfaceId}`, cols: 80, rows: 24, seq: 1 },
       replay: []
     }))
     render(
@@ -730,7 +729,7 @@ describe('AgentTerminalPreview', () => {
     if (!first || !second) {
       throw new Error('Expected two terminal preview fixtures')
     }
-    const surfaceIds = connect.mock.calls.map((call) => call[1].surfaceId)
+    const surfaceIds = connect.mock.calls.map((call) => call[1]?.surfaceId)
     expect(surfaceIds).toHaveLength(2)
     expect(surfaceIds[0]).not.toBe(surfaceIds[1])
     // A grid card and the dialog it opens are distinct surfaces on main.
